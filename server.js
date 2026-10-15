@@ -1,13 +1,11 @@
 const http = require("node:http");
 const fs = require("node:fs/promises");
 const path = require("node:path");
-const { MongoClient } = require("mongodb");
+const { formatNewsItem, getNewsCollection, validateNews } = require("./news-store");
 
 const port = Number(process.env.PORT || 3000);
 const pageFile = path.join(__dirname, "clg.html");
 const maxRequestBytes = 16 * 1024;
-const mongoUri = process.env.MONGODB_URI;
-const mongoDbName = process.env.MONGODB_DB || "campus_voice";
 let newsCollection;
 
 function sendJson(response, status, value) {
@@ -16,16 +14,6 @@ function sendJson(response, status, value) {
     "Cache-Control": "no-store",
   });
   response.end(JSON.stringify(value));
-}
-
-function formatNewsItem(item) {
-  return {
-    id: item._id.toString(),
-    title: item.title,
-    category: item.category,
-    content: item.content,
-    createdAt: item.createdAt.toISOString(),
-  };
 }
 
 function readRequestBody(request) {
@@ -52,25 +40,6 @@ function readRequestBody(request) {
     });
     request.on("error", reject);
   });
-}
-
-function validateNews(value) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return "Provide a valid news item.";
-  }
-
-  const { title, category, content } = value;
-  if (typeof title !== "string" || title.trim().length < 3 || title.trim().length > 100) {
-    return "Title must be between 3 and 100 characters.";
-  }
-  if (typeof category !== "string" || category.trim().length < 2 || category.trim().length > 40) {
-    return "Category must be between 2 and 40 characters.";
-  }
-  if (typeof content !== "string" || content.trim().length < 10 || content.trim().length > 1000) {
-    return "Story must be between 10 and 1000 characters.";
-  }
-
-  return null;
 }
 
 async function handleRequest(request, response) {
@@ -122,19 +91,8 @@ async function handleRequest(request, response) {
 }
 
 async function start() {
-  if (!mongoUri) {
-    throw new Error("Set MONGODB_URI to a MongoDB connection string before starting the server.");
-  }
-
-  const mongoClient = new MongoClient(mongoUri);
-  try {
-    await mongoClient.connect();
-    newsCollection = mongoClient.db(mongoDbName).collection("news");
-    await newsCollection.createIndex({ createdAt: -1 });
-  } catch (error) {
-    await mongoClient.close();
-    throw error;
-  }
+  newsCollection = await getNewsCollection();
+  await newsCollection.createIndex({ createdAt: -1 });
 
   const server = http.createServer((request, response) => {
     handleRequest(request, response).catch((error) => {
